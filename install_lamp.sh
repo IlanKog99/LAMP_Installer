@@ -44,6 +44,9 @@ apt update
 # Install LAMP stack
 apt install -y lamp-server^
 
+# Install PHP core and Apache module
+apt install -y php libapache2-mod-php php-mysql
+
 # Install PHP extensions
 apt install -y php-cli php-curl php-gd php-mbstring php-xml php-xmlrpc php-soap php-intl php-zip
 
