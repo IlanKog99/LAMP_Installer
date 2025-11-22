@@ -5,6 +5,8 @@
 
 # Collect inputs
 read -p "Enter domain name: " DOMAIN
+read -sp "Enter MySQL root password: " ROOT_PASSWORD
+echo ""
 read -p "Enter MySQL database name for WordPress: " DB_NAME
 read -p "Enter MySQL database user for WordPress: " DB_USER
 read -p "Enter MySQL database password: " DB_PASSWORD
@@ -50,12 +52,9 @@ apt install -y php libapache2-mod-php php-mysql
 # Install PHP extensions
 apt install -y php-cli php-curl php-gd php-mbstring php-xml php-xmlrpc php-soap php-intl php-zip
 
-# Secure MySQL (automated)
-mysql <<EOF
-DELETE FROM mysql.user WHERE User='';
-DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
-DROP DATABASE IF EXISTS test;
-DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+# Ensure root can login with mysql_native_password
+sudo mysql <<EOF
+ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$ROOT_PASSWORD';
 FLUSH PRIVILEGES;
 EOF
 
@@ -67,7 +66,6 @@ sed -i 's/DirectoryIndex.*/DirectoryIndex index.php index.html index.cgi index.p
 
 # Create webroot
 mkdir -p /var/www/$DOMAIN
-chown -R $USER:$USER /var/www/$DOMAIN
 
 # Create VirtualHost config
 cat > /etc/apache2/sites-available/$DOMAIN.conf <<EOF
@@ -80,7 +78,9 @@ cat > /etc/apache2/sites-available/$DOMAIN.conf <<EOF
     CustomLog \${APACHE_LOG_DIR}/access.log combined
 
     <Directory /var/www/$DOMAIN/>
+        Options Indexes FollowSymLinks
         AllowOverride All
+        Require all granted
     </Directory>
 </VirtualHost>
 EOF
@@ -91,12 +91,11 @@ a2dissite 000-default
 a2enmod rewrite
 
 # Create database and user (MySQL)
-mysql <<EOF
+sudo mysql -u root -p"$ROOT_PASSWORD" <<EOF
 CREATE DATABASE $DB_NAME DEFAULT CHARACTER SET utf8 COLLATE utf8_unicode_ci;
-CREATE USER '$DB_USER'@'localhost' IDENTIFIED WITH mysql_native_password BY '$DB_PASSWORD';
-GRANT ALL ON $DB_NAME.* TO '$DB_USER'@'localhost';
+CREATE USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASSWORD';
+GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';
 FLUSH PRIVILEGES;
-EXIT;
 EOF
 
 # Download and setup WordPress
@@ -113,6 +112,8 @@ chown -R www-data:www-data /var/www/$DOMAIN
 # Set permissions
 find /var/www/$DOMAIN/ -type d -exec chmod 750 {} \;
 find /var/www/$DOMAIN/ -type f -exec chmod 640 {} \;
+# Ensure index.php is readable
+chmod 640 /var/www/$DOMAIN/index.php
 
 # Configure wp-config.php
 SALTS=$(curl -s https://api.wordpress.org/secret-key/1.1/salt/)
@@ -140,7 +141,50 @@ if ! grep -q "FS_METHOD" /var/www/$DOMAIN/wp-config.php; then
     sed -i "/\/\* Add any custom values between this line and the \"stop editing\" comment. \*\//a define('FS_METHOD', 'direct');" /var/www/$DOMAIN/wp-config.php
 fi
 
-# Create custom landing page if requested
+# SSL setup
+if [ "$SSL_CHOICE" = "1" ]; then
+    # Self-signed certificate
+    a2enmod ssl
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout /etc/ssl/private/apache-selfsigned.key \
+        -out /etc/ssl/certs/apache-selfsigned.crt \
+        -subj "/C=US/ST=State/L=City/O=Organization/CN=$DOMAIN"
+    
+    # Add HTTPS VirtualHost
+    cat >> /etc/apache2/sites-available/$DOMAIN.conf <<EOF
+
+<VirtualHost *:443>
+   ServerName $DOMAIN
+   DocumentRoot /var/www/$DOMAIN
+
+   SSLEngine on
+   SSLCertificateFile /etc/ssl/certs/apache-selfsigned.crt
+   SSLCertificateKeyFile /etc/ssl/private/apache-selfsigned.key
+
+   <Directory /var/www/$DOMAIN/>
+       Options Indexes FollowSymLinks
+       AllowOverride All
+       Require all granted
+   </Directory>
+</VirtualHost>
+EOF
+
+    # Add HTTP to HTTPS redirect
+    sed -i "/ServerName $DOMAIN/a\    Redirect / https://$DOMAIN/" /etc/apache2/sites-available/$DOMAIN.conf
+    
+    ufw allow "Apache Full"
+    
+elif [ "$SSL_CHOICE" = "2" ]; then
+    # Let's Encrypt
+    a2enmod ssl
+    apt update
+    apt install -y certbot python3-certbot-apache
+    certbot --apache -d $DOMAIN --non-interactive --agree-tos --email $EMAIL --redirect
+    
+    ufw allow "Apache Full"
+fi
+
+# Create custom landing page if requested (after WordPress and SSL setup)
 if [ "$CUSTOM_PAGE" = "y" ] || [ "$CUSTOM_PAGE" = "Y" ]; then
     cat > /var/www/$DOMAIN/index.html <<EOF
 <!DOCTYPE html>
@@ -188,47 +232,6 @@ EOF
     sed -i 's/DirectoryIndex.*/DirectoryIndex index.html index.php index.cgi index.pl index.xhtml index.htm/' /etc/apache2/mods-enabled/dir.conf
     chown www-data:www-data /var/www/$DOMAIN/index.html
     chmod 640 /var/www/$DOMAIN/index.html
-fi
-
-# SSL setup
-if [ "$SSL_CHOICE" = "1" ]; then
-    # Self-signed certificate
-    a2enmod ssl
-    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout /etc/ssl/private/apache-selfsigned.key \
-        -out /etc/ssl/certs/apache-selfsigned.crt \
-        -subj "/C=US/ST=State/L=City/O=Organization/CN=$DOMAIN"
-    
-    # Add HTTPS VirtualHost
-    cat >> /etc/apache2/sites-available/$DOMAIN.conf <<EOF
-
-<VirtualHost *:443>
-   ServerName $DOMAIN
-   DocumentRoot /var/www/$DOMAIN
-
-   SSLEngine on
-   SSLCertificateFile /etc/ssl/certs/apache-selfsigned.crt
-   SSLCertificateKeyFile /etc/ssl/private/apache-selfsigned.key
-
-   <Directory /var/www/$DOMAIN/>
-       AllowOverride All
-   </Directory>
-</VirtualHost>
-EOF
-
-    # Add HTTP to HTTPS redirect
-    sed -i "/ServerName $DOMAIN/a\    Redirect / https://$DOMAIN/" /etc/apache2/sites-available/$DOMAIN.conf
-    
-    ufw allow "Apache Full"
-    
-elif [ "$SSL_CHOICE" = "2" ]; then
-    # Let's Encrypt
-    a2enmod ssl
-    apt update
-    apt install -y certbot python3-certbot-apache
-    certbot --apache -d $DOMAIN --non-interactive --agree-tos --email $EMAIL --redirect
-    
-    ufw allow "Apache Full"
 fi
 
 # Test config and restart Apache (single restart at end)
