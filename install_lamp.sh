@@ -5,7 +5,7 @@
 
 # Collect inputs
 read -p "Enter domain name: " DOMAIN
-read -sp "Enter MySQL root password: " ROOT_PASSWORD
+read -p "Enter MySQL root password: " ROOT_PASSWORD
 echo ""
 read -p "Enter MySQL database name for WordPress: " DB_NAME
 read -p "Enter MySQL database user for WordPress: " DB_USER
