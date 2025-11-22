@@ -214,7 +214,7 @@ if [ "$CUSTOM_PAGE" = "y" ] || [ "$CUSTOM_PAGE" = "Y" ]; then
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LAMP Server Installed</title>
+    <title>$DOMAIN - LAMP Server Installed</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -279,6 +279,23 @@ elif [ "$INSTALL_MODE" = "2" ]; then
     echo ""
     echo "Mode 2: Landing Page Only - Assuming you have a working WordPress installation"
     echo ""
+    
+    read -p "Remove this script after installation completes? (y/n): " REMOVE_SCRIPT
+    
+    # Set up cleanup trap if removal requested
+    INSTALL_SUCCESS=0
+    if [ "$REMOVE_SCRIPT" = "y" ] || [ "$REMOVE_SCRIPT" = "Y" ]; then
+        SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+        cleanup() {
+            if [ $INSTALL_SUCCESS -eq 1 ]; then
+                echo ""
+                echo "Removing installation script..."
+                # Use sh to delete in a separate process that outlives this script
+                sh -c "sleep 1; rm -f '$SCRIPT_PATH' && echo 'Script removed successfully.' || echo 'Warning: Could not remove script file.'" &
+            fi
+        }
+        trap cleanup EXIT
+    fi
     
     # Auto-detect domain from existing VirtualHost configs
     ENABLED_SITES=$(ls /etc/apache2/sites-enabled/*.conf 2>/dev/null | grep -v "000-default")
@@ -346,7 +363,7 @@ elif [ "$INSTALL_MODE" = "2" ]; then
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LAMP Server Installed</title>
+    <title>$DOMAIN - LAMP Server Installed</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -415,12 +432,35 @@ EOF
     echo "Landing page created successfully!"
     echo "Visit: http://$DOMAIN (or https://$DOMAIN if SSL is configured)"
     echo "WordPress admin is still accessible at: http://$DOMAIN/wp-admin"
+    
+    # Mark installation as successful
+    INSTALL_SUCCESS=1
+    
+    # Cleanup will be called automatically by EXIT trap if REMOVE_SCRIPT was set
+    # The trap fires when script exits (either normally or on error)
 
 elif [ "$INSTALL_MODE" = "3" ]; then
     # Mode 3: Encryption Only
     echo ""
     echo "Mode 3: Encryption Only - Assuming you have a working WordPress installation"
     echo ""
+    
+    read -p "Remove this script after installation completes? (y/n): " REMOVE_SCRIPT
+    
+    # Set up cleanup trap if removal requested
+    INSTALL_SUCCESS=0
+    if [ "$REMOVE_SCRIPT" = "y" ] || [ "$REMOVE_SCRIPT" = "Y" ]; then
+        SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+        cleanup() {
+            if [ $INSTALL_SUCCESS -eq 1 ]; then
+                echo ""
+                echo "Removing installation script..."
+                # Use sh to delete in a separate process that outlives this script
+                sh -c "sleep 1; rm -f '$SCRIPT_PATH' && echo 'Script removed successfully.' || echo 'Warning: Could not remove script file.'" &
+            fi
+        }
+        trap cleanup EXIT
+    fi
     
     # Collect inputs
     read -p "Enter domain name: " DOMAIN
@@ -513,6 +553,12 @@ EOF
     echo "SSL encryption configured successfully!"
     echo "Visit: https://$DOMAIN"
     echo "WordPress admin is still accessible at: https://$DOMAIN/wp-admin"
+    
+    # Mark installation as successful
+    INSTALL_SUCCESS=1
+    
+    # Cleanup will be called automatically by EXIT trap if REMOVE_SCRIPT was set
+    # The trap fires when script exits (either normally or on error)
 
 else
     echo "Invalid installation mode selected."
