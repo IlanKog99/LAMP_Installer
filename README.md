@@ -21,6 +21,13 @@ Automated bash script to install and configure a LAMP stack (Linux, Apache, MySQ
 
 ## Installation
 
+**Quick one-liner (download and run):**
+```bash
+wget -O install_lamp.sh https://raw.githubusercontent.com/IlanKog99/LAMP_Installer/main/install_lamp.sh && chmod +x install_lamp.sh && sudo ./install_lamp.sh
+```
+
+**Or step by step:**
+
 1. Download the script:
 ```bash
 wget https://raw.githubusercontent.com/IlanKog99/LAMP_Installer/main/install_lamp.sh
