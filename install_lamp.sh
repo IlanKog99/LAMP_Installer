@@ -3,8 +3,18 @@
 # LAMP + WordPress Installation Script
 # Database: MySQL (installed via lamp-server^ package)
 
-# Collect inputs
-read -p "Enter domain name: " DOMAIN
+# Mode selection
+echo "Installation Mode:"
+echo "1) Full Install (LAMP + WordPress + SSL + Landing Page)"
+echo "2) Landing Page Only (add custom landing page to existing installation)"
+echo "3) Encryption Only (add SSL/HTTPS to existing installation)"
+read -p "Choose installation mode (1-3): " INSTALL_MODE
+
+# Branch based on mode
+if [ "$INSTALL_MODE" = "1" ]; then
+    # Mode 1: Full Install
+    # Collect inputs
+    read -p "Enter domain name: " DOMAIN
 read -p "Enter MySQL root password: " ROOT_PASSWORD
 echo ""
 read -p "Enter MySQL database name for WordPress: " DB_NAME
@@ -55,6 +65,15 @@ apt install -y php-cli php-curl php-gd php-mbstring php-xml php-xmlrpc php-soap 
 # Ensure root can login with mysql_native_password
 sudo mysql <<EOF
 ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$ROOT_PASSWORD';
+FLUSH PRIVILEGES;
+EOF
+
+# Secure MySQL (remove anonymous users, test database, etc.)
+sudo mysql -u root -p"$ROOT_PASSWORD" <<EOF
+DELETE FROM mysql.user WHERE User='';
+DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
+DROP DATABASE IF EXISTS test;
+DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 FLUSH PRIVILEGES;
 EOF
 
@@ -169,8 +188,11 @@ if [ "$SSL_CHOICE" = "1" ]; then
 </VirtualHost>
 EOF
 
-    # Add HTTP to HTTPS redirect
-    sed -i "/ServerName $DOMAIN/a\    Redirect / https://$DOMAIN/" /etc/apache2/sites-available/$DOMAIN.conf
+    # Add HTTP to HTTPS redirect (modify existing HTTP block only)
+    sed -i "/<VirtualHost \*:80>/,/<\/VirtualHost>/{
+        /ServerName $DOMAIN/ a\\
+    Redirect / https://$DOMAIN/
+    }" /etc/apache2/sites-available/$DOMAIN.conf
     
     ufw allow "Apache Full"
     
@@ -251,5 +273,250 @@ INSTALL_SUCCESS=1
 
 # Cleanup will be called automatically by EXIT trap if REMOVE_SCRIPT was set
 # The trap fires when script exits (either normally or on error)
+
+elif [ "$INSTALL_MODE" = "2" ]; then
+    # Mode 2: Landing Page Only
+    echo ""
+    echo "Mode 2: Landing Page Only - Assuming you have a working WordPress installation"
+    echo ""
+    
+    # Auto-detect domain from existing VirtualHost configs
+    ENABLED_SITES=$(ls /etc/apache2/sites-enabled/*.conf 2>/dev/null | grep -v "000-default")
+    if [ -z "$ENABLED_SITES" ]; then
+        # Fallback to sites-available if no enabled sites
+        AVAILABLE_SITES=$(ls /etc/apache2/sites-available/*.conf 2>/dev/null | grep -v "000-default")
+        if [ -z "$AVAILABLE_SITES" ]; then
+            echo "Error: No VirtualHost configurations found."
+            echo "Please ensure you have a working WordPress installation with Apache configured."
+            exit 1
+        fi
+        SITES_LIST=($AVAILABLE_SITES)
+    else
+        SITES_LIST=($ENABLED_SITES)
+    fi
+    
+    # If multiple sites found, prompt user to select
+    if [ ${#SITES_LIST[@]} -gt 1 ]; then
+        echo "Multiple VirtualHost configurations found:"
+        for i in "${!SITES_LIST[@]}"; do
+            echo "$((i+1))) $(basename ${SITES_LIST[$i]})"
+        done
+        while true; do
+            read -p "Select site (1-${#SITES_LIST[@]}): " SITE_CHOICE
+            # Validate input is numeric and in range
+            if [[ "$SITE_CHOICE" =~ ^[0-9]+$ ]] && [ "$SITE_CHOICE" -ge 1 ] && [ "$SITE_CHOICE" -le ${#SITES_LIST[@]} ]; then
+                break
+            else
+                echo "Invalid selection. Please enter a number between 1 and ${#SITES_LIST[@]}."
+            fi
+        done
+        SELECTED_SITE="${SITES_LIST[$((SITE_CHOICE-1))]}"
+    else
+        SELECTED_SITE="${SITES_LIST[0]}"
+    fi
+    
+    # Extract domain from VirtualHost config
+    DOMAIN=$(grep -i "ServerName" "$SELECTED_SITE" | head -1 | sed -E 's/.*ServerName[[:space:]]+([^[:space:]]+).*/\1/' | tr -d ' ')
+    
+    if [ -z "$DOMAIN" ]; then
+        echo "Error: Could not detect domain from VirtualHost configuration."
+        exit 1
+    fi
+    
+    echo "Detected domain: $DOMAIN"
+    
+    # Verify VirtualHost config exists
+    if [ ! -f "/etc/apache2/sites-available/$DOMAIN.conf" ] && [ ! -f "/etc/apache2/sites-enabled/$DOMAIN.conf" ]; then
+        echo "Error: VirtualHost configuration for $DOMAIN not found."
+        exit 1
+    fi
+    
+    # Check if webroot directory exists, create if not
+    if [ ! -d "/var/www/$DOMAIN" ]; then
+        echo "Warning: Directory /var/www/$DOMAIN does not exist. Creating it..."
+        mkdir -p /var/www/$DOMAIN
+        chown www-data:www-data /var/www/$DOMAIN
+        chmod 755 /var/www/$DOMAIN
+    fi
+    
+    # Create custom landing page HTML
+    cat > /var/www/$DOMAIN/index.html <<EOF
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LAMP Server Installed</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .container {
+            text-align: center;
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }
+        h1 { margin-top: 0; }
+        a {
+            color: #fff;
+            text-decoration: underline;
+        }
+        a:hover { text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>LAMP Server Successfully Installed!</h1>
+        <p>This server was installed and configured using IlanKog99's script.</p>
+        <p>Available at: <a href="https://github.com/IlanKog99/LAMP_Installer" target="_blank">IlanKog99/LAMP_Installer</a> on GitHub</p>
+    </div>
+</body>
+    </html>
+EOF
+    
+    # Add DirectoryIndex directive to VirtualHost config (per-VirtualHost, not global)
+    VHOST_CONFIG="/etc/apache2/sites-available/$DOMAIN.conf"
+    if [ ! -f "$VHOST_CONFIG" ]; then
+        VHOST_CONFIG="/etc/apache2/sites-enabled/$DOMAIN.conf"
+    fi
+    
+    # Check if DirectoryIndex already exists in HTTP VirtualHost block only, if not add it
+    if ! sed -n "/<VirtualHost \*:80>/,/<\/VirtualHost>/p" "$VHOST_CONFIG" | grep -q "DirectoryIndex"; then
+        # Add DirectoryIndex after DocumentRoot in the HTTP VirtualHost block
+        sed -i "/<VirtualHost \*:80>/,/<\/VirtualHost>/{
+            /DocumentRoot/a\\
+    DirectoryIndex index.html index.php index.cgi index.pl index.xhtml index.htm
+        }" "$VHOST_CONFIG"
+    else
+        # Update existing DirectoryIndex in HTTP VirtualHost block only
+        sed -i "/<VirtualHost \*:80>/,/<\/VirtualHost>/{
+            s/^[[:space:]]*DirectoryIndex.*/    DirectoryIndex index.html index.php index.cgi index.pl index.xhtml index.htm/
+        }" "$VHOST_CONFIG"
+    fi
+    
+    # Set proper permissions
+    chown www-data:www-data /var/www/$DOMAIN/index.html
+    chmod 640 /var/www/$DOMAIN/index.html
+    
+    # Test config and restart Apache
+    apache2ctl configtest
+    systemctl restart apache2
+    
+    echo ""
+    echo "Landing page created successfully!"
+    echo "Visit: http://$DOMAIN (or https://$DOMAIN if SSL is configured)"
+    echo "WordPress admin is still accessible at: http://$DOMAIN/wp-admin"
+
+elif [ "$INSTALL_MODE" = "3" ]; then
+    # Mode 3: Encryption Only
+    echo ""
+    echo "Mode 3: Encryption Only - Assuming you have a working WordPress installation"
+    echo ""
+    
+    # Collect inputs
+    read -p "Enter domain name: " DOMAIN
+    
+    # Verify VirtualHost config exists and determine correct path
+    VHOST_CONFIG="/etc/apache2/sites-available/$DOMAIN.conf"
+    if [ ! -f "$VHOST_CONFIG" ]; then
+        if [ -f "/etc/apache2/sites-enabled/$DOMAIN.conf" ]; then
+            VHOST_CONFIG="/etc/apache2/sites-enabled/$DOMAIN.conf"
+        else
+            echo "Error: VirtualHost configuration for $DOMAIN not found."
+            echo "Please ensure you have a working WordPress installation with Apache configured."
+            exit 1
+        fi
+    fi
+    
+    # Check if HTTPS VirtualHost already exists
+    if grep -q "<VirtualHost \*:443>" "$VHOST_CONFIG" 2>/dev/null; then
+        echo "Error: HTTPS VirtualHost already exists for $DOMAIN."
+        echo "SSL is already configured. Exiting to avoid conflicts."
+        exit 1
+    fi
+    
+    # SSL options
+    echo ""
+    echo "SSL Options:"
+    echo "1) Self-signed certificate"
+    echo "2) Let's Encrypt certificate"
+    read -p "Choose SSL option (1-2): " SSL_CHOICE
+    
+    if [ "$SSL_CHOICE" = "2" ]; then
+        read -p "Enter email for Let's Encrypt: " EMAIL
+    fi
+    
+    # Enable SSL module
+    a2enmod ssl
+    
+    if [ "$SSL_CHOICE" = "1" ]; then
+        # Self-signed certificate
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout /etc/ssl/private/apache-selfsigned.key \
+            -out /etc/ssl/certs/apache-selfsigned.crt \
+            -subj "/C=US/ST=State/L=City/O=Organization/CN=$DOMAIN"
+        
+        # Append HTTPS VirtualHost to existing config
+        cat >> "$VHOST_CONFIG" <<EOF
+
+<VirtualHost *:443>
+   ServerName $DOMAIN
+   DocumentRoot /var/www/$DOMAIN
+
+   SSLEngine on
+   SSLCertificateFile /etc/ssl/certs/apache-selfsigned.crt
+   SSLCertificateKeyFile /etc/ssl/private/apache-selfsigned.key
+
+   <Directory /var/www/$DOMAIN/>
+       Options Indexes FollowSymLinks
+       AllowOverride All
+       Require all granted
+   </Directory>
+</VirtualHost>
+EOF
+        
+        # Add HTTP to HTTPS redirect (modify existing HTTP block)
+        # Insert redirect directive after ServerName in HTTP VirtualHost block
+        sed -i "/<VirtualHost \*:80>/,/<\/VirtualHost>/{
+            /ServerName $DOMAIN/ a\\
+    Redirect / https://$DOMAIN/
+        }" "$VHOST_CONFIG"
+        
+        ufw allow "Apache Full"
+        
+    elif [ "$SSL_CHOICE" = "2" ]; then
+        # Let's Encrypt
+        apt update
+        apt install -y certbot python3-certbot-apache
+        certbot --apache -d $DOMAIN --non-interactive --agree-tos --email $EMAIL --redirect
+        
+        ufw allow "Apache Full"
+    else
+        echo "Invalid SSL option selected."
+        exit 1
+    fi
+    
+    # Test config and restart Apache
+    apache2ctl configtest
+    systemctl restart apache2
+    
+    echo ""
+    echo "SSL encryption configured successfully!"
+    echo "Visit: https://$DOMAIN"
+    echo "WordPress admin is still accessible at: https://$DOMAIN/wp-admin"
+
+else
+    echo "Invalid installation mode selected."
+    exit 1
+fi
 
 
