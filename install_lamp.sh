@@ -114,8 +114,18 @@ find /var/www/$DOMAIN/ -type f -exec chmod 640 {} \;
 # Configure wp-config.php
 SALTS=$(curl -s https://api.wordpress.org/secret-key/1.1/salt/)
 
-# Replace salts
-sed -i "/AUTH_KEY/,/NONCE_SALT/c\\$SALTS" /var/www/$DOMAIN/wp-config.php
+# Replace salts (find line numbers and replace the range)
+START_LINE=$(grep -n "define( 'AUTH_KEY'" /var/www/$DOMAIN/wp-config.php | cut -d: -f1)
+END_LINE=$(grep -n "define( 'NONCE_SALT'" /var/www/$DOMAIN/wp-config.php | cut -d: -f1)
+if [ -n "$START_LINE" ] && [ -n "$END_LINE" ]; then
+    # Create temp file with salts
+    SALTS_FILE=$(mktemp)
+    echo "$SALTS" > "$SALTS_FILE"
+    # Replace the range
+    sed -i "${START_LINE},${END_LINE}d" /var/www/$DOMAIN/wp-config.php
+    sed -i "$((START_LINE-1))r $SALTS_FILE" /var/www/$DOMAIN/wp-config.php
+    rm -f "$SALTS_FILE"
+fi
 
 # Replace DB values
 sed -i "s/define( 'DB_NAME', 'database_name_here' );/define( 'DB_NAME', '$DB_NAME' );/" /var/www/$DOMAIN/wp-config.php
